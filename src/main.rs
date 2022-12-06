@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::fmt::Error;
+use std::ops::Mul;
 use std::result;
 use std::str::FromStr;
+use drift::math::position::direction_to_close_position;
 use solana_program::instruction::AccountMeta;
 
 use anchor_client::anchor_lang::AccountDeserialize;
@@ -32,6 +34,7 @@ use drift::error::DriftResult;
 use drift::state::oracle::OraclePriceData;
 use drift::state::oracle_map::AccountInfoAndOracleSource;
 use drift::state::perp_market::{PerpMarket, self};
+use drift::state::user::{OrderType, MarketType};
 
 use anchor_client::solana_client::client_error::ClientError;
 use drift::state::spot_market::{SpotMarket};
@@ -45,6 +48,9 @@ use std::cmp::{max, min};
 use drift::math::spot_balance::{get_token_amount};
 use drift::state::spot_market::SpotBalanceType;
 use pyth_sdk_solana::{load_price_feed_from_account, PriceFeed, Price};
+use drift::math::orders::{ 
+    standardize_base_asset_amount_ceil,
+};
 
 #[macro_use]
 extern crate lazy_static;
@@ -58,9 +64,139 @@ use math::{compute_funding_rate, compute_borrow_rate};
 mod constants;
 use constants::*;
 
+
 pub enum Market { 
     PerpMarket(PerpMarket), 
     SpotMarket(SpotMarket)
+}
+
+macro_rules! cast {
+    ($target: expr, $pat: path) => {
+        {
+            if let $pat(a) = $target { // #1
+                a
+            } else {
+                panic!(
+                    "mismatch variant when cast to {}", 
+                    stringify!($pat)); // #2
+            }
+        }
+    };
+}
+
+pub fn get_cached_accounts(connection: &RpcClient, state_account: &State) -> Result<HashMap<Pubkey, Market>> { 
+    let mut cached_accounts: HashMap<Pubkey, Market> = HashMap::new();
+    for i in 0..state_account.number_of_markets { 
+        let market_pk = get_perp_market_public_key(i, &PROGRAM_ID);
+        let market = get_perp_market(connection, &market_pk)?;
+        cached_accounts.insert(market_pk, Market::PerpMarket(market));
+    }
+
+    for i in 0..state_account.number_of_spot_markets { 
+        let spot_pk = get_spot_market_public_key(i, &PROGRAM_ID);
+        let spot_market = get_spot_market(connection, &spot_pk)?;
+        cached_accounts.insert(spot_pk, Market::SpotMarket(spot_market));
+    }
+    Ok(cached_accounts)
+}
+
+pub fn get_remaining_accounts(state_account: &State, cached_accounts: &HashMap<Pubkey, Market>) -> Result<Vec<AccountMeta>> { 
+    let mut perp_market_dict = HashMap::new();
+    let mut spot_market_dict = HashMap::new();
+    let mut oracle_dict = HashMap::new();
+
+    for i in 0..state_account.number_of_markets { 
+        let market_pk = get_perp_market_public_key(i, &PROGRAM_ID);
+
+        let market_meta = AccountMeta {
+            pubkey: market_pk, 
+            is_signer: false, 
+            is_writable: true
+        };
+        perp_market_dict.insert(market_pk, market_meta);
+
+        let market = cast!(cached_accounts.get(&market_pk).unwrap(), Market::PerpMarket);
+        let oracle_meta = AccountMeta { 
+            pubkey: market.amm.oracle, 
+            is_signer: false, 
+            is_writable: false,
+        };
+        oracle_dict.insert(market.amm.oracle, oracle_meta);
+    }
+
+    for i in 0..state_account.number_of_spot_markets { 
+        let spot_pk = get_spot_market_public_key(i, &PROGRAM_ID);
+        let spot_meta = AccountMeta { 
+            pubkey: spot_pk, 
+            is_signer: false, 
+            is_writable: true, 
+        };
+        spot_market_dict.insert(spot_pk, spot_meta);
+
+        if i != 0 {
+            let spot_market = cast!(cached_accounts.get(&spot_pk).unwrap(), Market::SpotMarket);
+            let oracle_meta = AccountMeta { 
+                pubkey: spot_market.oracle, 
+                is_signer: false, 
+                is_writable: false,
+            };
+            oracle_dict.insert(spot_market.oracle, oracle_meta);
+        }
+    }
+
+    let oracle_values: Vec<AccountMeta> = oracle_dict.into_values().collect();
+    let spot_values: Vec<AccountMeta> = spot_market_dict.into_values().collect();
+    let perp_values: Vec<AccountMeta> = perp_market_dict.into_values().collect();
+    let remaining_accounts = vec![oracle_values, spot_values, perp_values].concat();
+
+    Ok(remaining_accounts)
+}
+
+pub fn get_order_params(
+    order_type: OrderType, 
+    market_type: MarketType, 
+    direction: PositionDirection, 
+    base_asset_amount: u64, 
+    market_index: u16, 
+    reduce_only: bool,
+) -> OrderParams {
+    // todo: better auction start/end price
+    // start = oracle 
+    // end = swap impact 
+
+    OrderParams { 
+        order_type, 
+        market_type, 
+        direction, 
+        base_asset_amount,
+        market_index,
+        reduce_only,
+        user_order_id: 0, 
+        price: 0,
+        post_only: false,
+        immediate_or_cancel: false,
+        trigger_price: None,
+        trigger_condition: drift::state::user::OrderTriggerCondition::Above,
+        oracle_price_offset: None,
+        auction_duration: None,
+        max_ts: None,
+        auction_start_price: None,
+        auction_end_price: None,
+    }
+}
+
+macro_rules! cast {
+    ($target: expr, $pat: path) => {
+        {
+            if let $pat(a) = $target { // #1
+                a
+            } else {
+                panic!(
+                    "mismatch variant when cast to {}", 
+                    stringify!($pat)); // #2
+            }
+        }
+    };
 }
 
 fn main() -> Result<()> {
@@ -78,7 +214,12 @@ fn main() -> Result<()> {
 
     // TODO: make these cli arguments
     let owner_kp_path = "../keypairs/x19zhryYtodTDgmRq6VLtQxbo4zfZUqa9hoobX47BeL.json";
-
+    let subaccount_id: u16 = 0;
+    let perp_market_index = 0;
+    let spot_market_index = 1;
+    let target_position_size = BASE_PRECISION_U64 / 10;
+    let simulate = false;
+    
     // setup anchor things 
     let owner = read_keypair_file(owner_kp_path.clone()).unwrap();
     let rc_owner = Rc::new(owner); 
@@ -89,232 +230,174 @@ fn main() -> Result<()> {
     );
     let program = provider.program(PROGRAM_ID.clone());
 
-    let owner = read_keypair_file(owner_kp_path.clone()).unwrap();
-
-    // cache data once for addresses 
+    // cache perp/spot data once for addresses 
     // cache markets once to re-use in get_remaining_accounts
-    let subaccount_id: u16 = 0;
     let state = get_state_public_key(&PROGRAM_ID);
     let state_account = get_state(&connection, &state).unwrap();
 
-    let mut cached_accounts: HashMap<Pubkey, Market> = HashMap::new();
-    for i in 0..state_account.number_of_markets { 
-        let market_pk = get_perp_market_public_key(i, &PROGRAM_ID);
-        let market = get_perp_market(&connection, &market_pk)?;
-        cached_accounts.insert(market_pk, Market::PerpMarket(market));
+    let cached_accounts = get_cached_accounts(&connection, &state_account)?;
+    let remaining_accounts = get_remaining_accounts(&state_account, &cached_accounts)?;
+
+    let perp_address = get_perp_market_public_key(perp_market_index, &PROGRAM_ID);
+    let mut perp_market = *cast!(cached_accounts.get(&perp_address).unwrap(), Market::PerpMarket);
+
+    // 1e9 precision
+    let (funding_payment, funding_direction) = compute_funding_rate(&connection, &mut perp_market).unwrap();
+    println!("funding APR: {:#?} {:#?}", funding_payment, funding_direction);
+
+    // 1e9 precision
+    let spot_address = get_spot_market_public_key(spot_market_index, &PROGRAM_ID);
+    let spot_market = *cast!(cached_accounts.get(&spot_address).unwrap(), Market::SpotMarket);
+    let borrow_rate = compute_borrow_rate(&spot_market).unwrap().mul(10_u128.pow(5_u32));
+    println!("borrow APR: {:#?}", borrow_rate);
+
+    // todo: check if greater than some threshold (to ensure profit)
+    let delta = funding_payment.saturating_sub(borrow_rate);
+    println!("INFO: funding delta % {}", delta as f64 / 1e9);
+    if delta == 0 { 
+        println!("borrow rate too expensive to arb... exiting");
+        return Ok(());
     }
 
-    for i in 0..state_account.number_of_spot_markets { 
-        let spot_pk = get_spot_market_public_key(i, &PROGRAM_ID);
-        let spot_market = get_spot_market(&connection, &spot_pk)?;
-        cached_accounts.insert(spot_pk, Market::SpotMarket(spot_market));
-    }
+    // repay current debt 
+    let user_address = get_user_public_key(&rc_owner.pubkey(), subaccount_id, &PROGRAM_ID);
+    let user = get_user(&connection, &user_address)?;
 
-    let mut perp_market_dict = HashMap::new();
-    let mut spot_market_dict = HashMap::new();
-    let mut oracle_dict = HashMap::new();
-    for i in 0..state_account.number_of_markets { 
-        let market_pk = get_perp_market_public_key(i, &PROGRAM_ID);
+    let (target_perp_position, target_spot_position) = match funding_direction { 
+        PositionDirection::Long => (PositionDirection::Long, SpotBalanceType::Borrow), 
+        PositionDirection::Short => (PositionDirection::Short, SpotBalanceType::Deposit), 
+    };
+    println!("target perp/spot positions: {:#?} {:#?}", target_perp_position, target_spot_position);
 
-        let market_meta = AccountMeta {
-            pubkey: market_pk, 
-            is_signer: false, 
-            is_writable: true
-        };
-        perp_market_dict.insert(market_pk, market_meta);
+    // adjust perp position (same logic for spot position)
+    // base_amount = if we have a position: 
+        // if direction != target_direction: 
+            // close + open:
+            // abs(position) + target position
+        // else 
+            // 0
+    // else 
+        // target position
 
-        if let Some(Market::PerpMarket(market)) = cached_accounts.get(&market_pk) { 
-            let oracle_meta = AccountMeta { 
-                pubkey: market.amm.oracle, 
-                is_signer: false, 
-                is_writable: false,
-            };
-            oracle_dict.insert(market.amm.oracle, oracle_meta);
-        } else { panic!("ahh") }
-    }
+    let order_base_amount = if let Ok(position) = user.get_perp_position(perp_market_index) { 
+        if position.base_asset_amount != 0 && position.get_direction() != target_perp_position {
+            println!("PERP: closing current position: {:#?}", position);
+            Some(position.base_asset_amount.unsigned_abs() + target_position_size)
+        } else { 
+            println!("PERP: in correct position, doing nothing...");
+            None
+        }
+    } else { 
+        println!("PERP: no current position...");
+        Some(target_position_size)
+    };
 
-    for i in 0..state_account.number_of_spot_markets { 
-        let spot_pk = get_spot_market_public_key(i, &PROGRAM_ID);
-        let spot_meta = AccountMeta { 
-            pubkey: spot_pk, 
-            is_signer: false, 
-            is_writable: true, 
-        };
-        spot_market_dict.insert(spot_pk, spot_meta);
+    if let Some(order_base_amount) = order_base_amount { 
+        let order_base_amount = standardize_base_asset_amount_ceil(
+            order_base_amount, 
+            perp_market.amm.order_step_size,
+        ).unwrap();
 
-        if i != 0 {
-            if let Some(Market::SpotMarket(spot_market)) = cached_accounts.get(&spot_pk) {
-                let oracle_meta = AccountMeta { 
-                    pubkey: spot_market.oracle, 
-                    is_signer: false, 
-                    is_writable: false,
-                };
-                oracle_dict.insert(spot_market.oracle, oracle_meta);
-            } else { panic!("ahh") }
+        let params = get_order_params(
+            OrderType::Market,
+            MarketType::Perp,
+            target_perp_position,
+            order_base_amount,
+            perp_market_index,
+            false
+        );
+        println!("PERP: sending order: {:#?}", params);
+
+        let req = program
+            .request()
+            .accounts(accounts::PlaceOrder { 
+                state, 
+                user: user_address.clone(), 
+                authority: rc_owner.pubkey()
+            })
+            .args(ix::PlacePerpOrder { 
+                params
+            }).accounts(remaining_accounts.clone());
+       
+        if !simulate { 
+            let sig = req.send().unwrap();
+            println!("sig {}", sig);
         }
     }
 
-    let oracle_values: Vec<AccountMeta> = oracle_dict.into_values().collect();
-    let spot_values: Vec<AccountMeta> = spot_market_dict.into_values().collect();
-    let perp_values: Vec<AccountMeta> = perp_market_dict.into_values().collect();
-    let remaining_accounts = vec![oracle_values, spot_values, perp_values].concat();
+    // adjust spot position
+    if !user.is_margin_trading_enabled {
+        println!("SPOT: enabling margin trading...");
 
+        // enable margin trading
+        let req = program
+            .request()
+            .accounts(accounts::UpdateUser {
+                user: user_address.clone(), 
+                authority: rc_owner.pubkey(),
+            })
+            .args(ix::UpdateUserMarginTradingEnabled {
+                _sub_account_id: subaccount_id, 
+                margin_trading_enabled: true
+            });
 
-    // init new account 
-    // let name:[u8; 32] = [0; 32];
-    // program
-    //     .request()
-    //     .accounts(accounts::InitializeUser {
-    //         user, 
-    //         user_stats, 
-    //         state, 
-    //         authority: owner.pubkey(), 
-    //         payer: owner.pubkey(), 
-    //         rent: sysvar::rent::id(),
-    //         system_program: system_program::id(),
-    //     })
-    //     .args(ix::InitializeUser {
-    //         sub_account_id: subaccount_id, 
-    //         name 
-    //     })
-    //     .send()
-    //     .unwrap();
+        if !simulate { 
+            let sig = req.send().unwrap();
+            println!("sig {}", sig);
+        }
+    }
 
-    // program
-    //     .request()
-    //     .accounts(accounts::InitializeUserStats {
-    //         user_stats, 
-    //         state, 
-    //         authority: owner.pubkey(), 
-    //         payer: owner.pubkey(), 
-    //         rent: sysvar::rent::id(),
-    //         system_program: system_program::id(),
-    //     })
-    //     .args(ix::InitializeUserStats {})
-    //     .send()
-    //     .unwrap();
-
-
-
-
-
-
-    let market_index: u16 = 0;
-    let amount: u64 = 1 * QUOTE_PRECISION as u64;
-    let reduce_only = true;
-
-    let spot_market_addr = get_spot_market_public_key(market_index, &PROGRAM_ID);
-    let spot_market = get_spot_market(&connection, &spot_market_addr)?;
-    let mint = spot_market.mint;
-
-    let user_token_account = derive_token_address(&owner.pubkey(), &mint);
-
-    // place order 
-    let order_type = drift::state::user::OrderType::Market;
-    // let market_type = drift::state::user::MarketType::Perp;
-    let market_type = drift::state::user::MarketType::Spot;
-    // let direction = PositionDirection::Long;
-    let direction = PositionDirection::Short;
-    let market_index = 1; 
-    let base_asset_amount = BASE_PRECISION as u64 / 10;
-    let reduce_only = false;
-
-    let params = OrderParams { 
-        order_type, 
-        market_type, 
-        direction, 
-        base_asset_amount,
-        user_order_id: 0, 
-        price: 0,
-        market_index: market_index,
-        reduce_only: reduce_only,
-        post_only: false,
-        immediate_or_cancel: false,
-        trigger_price: None,
-        trigger_condition: drift::state::user::OrderTriggerCondition::Above,
-        oracle_price_offset: None,
-        auction_duration: None,
-        max_ts: None,
-        auction_start_price: None,
-        auction_end_price: None,
+    let spot_order_size = if let Some(position) = user.get_spot_position(spot_market_index) { 
+        if position.scaled_balance != 0 && position.balance_type != target_spot_position { 
+            println!("SPOT: closing current position: {:#?}", position);
+            let token_amount = position.get_signed_token_amount(&spot_market).unwrap();
+            Some(token_amount.unsigned_abs() as u64 + target_position_size)
+        } else { 
+            println!("SPOT: in correct position, doing nothing...");
+            None
+        }
+    } else { 
+        println!("SPOT: no current position...");
+        Some(target_position_size)
     };
 
-    let user = get_user_public_key(&owner.pubkey(), subaccount_id, &PROGRAM_ID);
+    if let Some(spot_order_size) = spot_order_size { 
+        let spot_order_size = standardize_base_asset_amount_ceil(
+            spot_order_size, 
+            spot_market.order_step_size
+        ).unwrap();
 
-    let req = program
-        .request()
-        .accounts(accounts::PlaceOrder { 
-            state, 
-            user, 
-            authority: owner.pubkey()
-        })
-        .args(ix::PlaceSpotOrder { 
-            params
-        }).accounts(remaining_accounts);
+        let direction = match target_spot_position { 
+            SpotBalanceType::Borrow => PositionDirection::Short, 
+            SpotBalanceType::Deposit => PositionDirection::Long,
+        };
 
-    // // withdraw + deposit
-    // let req = program
-    //     .request()
-    //     .accounts(accounts::Withdraw {
-    //         user,
-    //         user_stats, 
-    //         state, 
-    //         authority: owner.pubkey(), 
-    //         spot_market_vault, 
-    //         drift_signer,
-    //         user_token_account,
-    //         token_program: TOKEN_PROGRAM_ID,
-    //     }).args(ix::Withdraw { 
-    //         market_index, 
-    //         amount, 
-    //         reduce_only,
-    //     }).accounts(remaining_accounts);
+        let params = get_order_params(
+            OrderType::Market,
+            MarketType::Spot,
+            direction,
+            spot_order_size,
+            spot_market_index,
+            false
+        );
+        println!("SPOT: sending order: {:#?}", params);
 
-    // let req = program
-    //     .request()
-    //     .accounts(accounts::Deposit {
-    //         user,
-    //         user_stats, 
-    //         state, 
-    //         authority: owner.pubkey(), 
-    //         spot_market_vault, 
-    //         user_token_account,
-    //         token_program: TOKEN_PROGRAM_ID,
-    //     })
-    //     .args(ix::Deposit {
-    //         market_index, 
-    //         amount, 
-    //         reduce_only,
-    //     })
-    //     .accounts(remaining_accounts);
-
-    let sig = req.send();
-    match sig {
-        Ok(sig) => println!("sig {}", sig),
-        Err(err) => println!("err {:#?}", err),
-    };
-
-    // deposit 
-    // withdraw 
-    // open new position 
-    // close position 
-
-    // let market_index = 0; 
-    // let market_addr = get_perp_market_public_key(market_index, &program_id);
-    // let mut market = get_perp_market(&connection, &market_addr)?;
-
-    // // 1e9 precision
-    // let (funding_payment, funding_direction) = compute_funding_rate(&connection, &mut market).unwrap();
-    // println!("funding APR: {:#?} {:#?}", funding_payment, funding_direction);
-
-    // let spot_market_index = 1;
-    // let spot_market_addr = get_spot_market_public_key(spot_market_index, &program_id);
-    // let spot_market = get_spot_market(&connection, &spot_market_addr)?;
-    // // 1e4
-    // let borrow_rate = compute_borrow_rate(&spot_market).unwrap();
-    // println!("borrow APR: {:#?}", borrow_rate);
-
-
+        let req = program
+            .request()
+            .accounts(accounts::PlaceOrder { 
+                state, 
+                user: user_address.clone(), 
+                authority: rc_owner.pubkey()
+            })
+            .args(ix::PlaceSpotOrder { 
+                params
+            }).accounts(remaining_accounts.clone());
+        
+        if !simulate { 
+            let sig = req.send().unwrap();
+            println!("sig {}", sig);
+        }
+    }
 
     Ok(())
 }

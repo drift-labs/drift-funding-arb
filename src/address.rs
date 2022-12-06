@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Error;
 use std::result;
 use std::str::FromStr;
+use drift::state::user::User;
 use solana_program::instruction::AccountMeta;
 
 use anchor_client::anchor_lang::AccountDeserialize;
@@ -91,6 +92,11 @@ pub fn get_drift_signer_public_key(program_id: &Pubkey) -> Pubkey {
     ).0
 }
 
+pub fn get_user(connection: &RpcClient, address: &Pubkey) -> Result<User> {
+    let data = &mut &*connection.get_account_data(address)?;
+    let user = User::try_deserialize(data)?;
+    Ok(user)
+}
 
 pub fn get_perp_market(connection: &RpcClient, address: &Pubkey) -> Result<PerpMarket> {
     let data = &mut &*connection.get_account_data(address)?;
