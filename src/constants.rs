@@ -61,3 +61,17 @@ pub enum DriftError {
 }
 
 pub type Result<T> = result::Result<T, DriftError>;
+
+macro_rules! cast {
+    ($target: expr, $pat: path) => {
+        {
+            if let $pat(a) = $target { // #1
+                a
+            } else {
+                panic!(
+                    "mismatch variant when cast to {}", 
+                    stringify!($pat)); // #2
+            }
+        }
+    };
+}
