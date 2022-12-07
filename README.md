@@ -13,6 +13,9 @@ USAGE:
     drift-funding-arb [OPTIONS] --keypair-path <KEYPAIR_PATH> --target-position-size <TARGET_POSITION_SIZE>
 
 OPTIONS:
+    -c, --close
+            will close all open positions
+
     -h, --help
             Print help information
 
@@ -53,17 +56,3 @@ OPTIONS:
   - if funding pays longs -> go long on the perp and borrow (+ sell) SOL spot 
   - if funding pays shorts -> go short on the perp and borrow (+ hold) SOL spot
 - closing out = close position + repay spot position 
-
-## todo
-- pull and deserialize user perp and spot market data [x]
-- compute funding + borrow rates - cross checked with UI [x]
-- deposit and withdraw logic (borrow / delta-neutral) [x]
-- place_perp_order logic (funding) [x]
-- tie it all together [x]
-- clean up [x]
-- optimize
-
-## optimizations 
-- position size needs to ensure will still profit after taker fees in spot and perp for both close and opening position
-- only open/change position a small amount of time (~5min) before funding rates are updated
-  - could open/close before/after funding if wanted to just capture funding quick
