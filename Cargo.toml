@@ -12,3 +12,4 @@ solana-program = "1.4.4"
 pyth-sdk-solana = "0.6.1"
 thiserror = "1.0.34"
 lazy_static = "1.4.0"
+clap = { version = "3.1.12", features = ["derive", "env"] }

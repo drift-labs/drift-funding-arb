@@ -1,3 +1,8 @@
+## example 
+`cargo run -- -k ../keypairs/x19.json -t 1 -s`
+- `-t`: 0.1 base size
+- `-s`: send transactions to mainnet flag (if not provided will simulate)
+
 ## overview
 - init drift account 
   - usdc collateral 
@@ -19,10 +24,11 @@
 - compute funding + borrow rates - cross checked with UI [x]
 - deposit and withdraw logic (borrow / delta-neutral) [x]
 - place_perp_order logic (funding) [x]
-- tie it all together
-- clean up 
+- tie it all together [x]
+- clean up [x]
 - optimize
 
 ## optimizations 
+- position size needs to ensure will still profit after taker fees in spot and perp for both close and opening position
 - only open/change position a small amount of time (~5min) before funding rates are updated
   - could open/close before/after funding if wanted to just capture funding quick
