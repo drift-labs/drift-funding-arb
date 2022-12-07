@@ -94,7 +94,7 @@ struct Args {
     /// spot to long/short for delta-neutral position
     #[clap(long, default_value_t = 1)]
     spot_market_index: u16,
-    /// simulate what would happen
+    /// will simulate what will happen by default -- provde '-s' flag to send txs
     #[clap(long, short, action)]
     simulate: bool,
 }
@@ -109,7 +109,7 @@ fn main() -> Result<()> {
         mut simulate,
     } = Args::parse();
 
-    simulate = !simulate; // will simulate by default -- provde '-s' flag to do real
+    simulate = !simulate; 
     target_position_size *= BASE_PRECISION_U64 / 10;
 
     // setup rpc 

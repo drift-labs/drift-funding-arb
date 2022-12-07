@@ -23,7 +23,7 @@ OPTIONS:
             perp to long/short for funding [default: 0]
 
     -s, --simulate
-            simulate what would happen
+            will simulate what will happen by default -- provde '-s' flag to send txs
 
         --spot-market-index <SPOT_MARKET_INDEX>
             spot to long/short for delta-neutral position [default: 1]
