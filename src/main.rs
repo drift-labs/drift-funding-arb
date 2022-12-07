@@ -1,21 +1,14 @@
-use std::collections::HashMap;
-use std::fmt::format;
 use std::ops::Mul;
 use std::rc::Rc;
 
 use drift::math::position::direction_to_close_position;
-use solana_program::instruction::AccountMeta;
 use anchor_client::solana_client::rpc_client::RpcClient;
 use anchor_client::solana_sdk::commitment_config::CommitmentConfig;
-use anchor_client::solana_sdk::pubkey::Pubkey;
 use anchor_client::solana_sdk::signature::Signer;
 use anchor_client::solana_sdk::signature::read_keypair_file;
 use anchor_client::{Client, Cluster};
 
-use drift::state::state::State;
-use drift::state::perp_market::PerpMarket;
 use drift::state::user::{OrderType, MarketType};
-use drift::state::spot_market::SpotMarket;
 use drift::state::spot_market::SpotBalanceType;
 
 use drift::math::constants::*;
@@ -158,26 +151,26 @@ fn main() -> Result<()> {
     let perp_address = get_perp_market_public_key(perp_market_index, &PROGRAM_ID);
     let mut perp_market = *cast!(cached_accounts.get(&perp_address).unwrap(), Market::PerpMarket);
 
-    // 1e9 precision
-    let (funding_payment, funding_direction) = compute_funding_rate(&connection, &mut perp_market).unwrap();
-    println!("funding APR: {:#?} {:#?}", funding_payment, funding_direction);
-
-    // 1e9 precision
     let spot_address = get_spot_market_public_key(spot_market_index, &PROGRAM_ID);
     let spot_market = *cast!(cached_accounts.get(&spot_address).unwrap(), Market::SpotMarket);
-    let borrow_rate = compute_borrow_rate(&spot_market).unwrap().mul(10_u128.pow(5_u32));
-    println!("borrow APR: {:#?}", borrow_rate);
 
     let spot_name = String::from_utf8_lossy(&spot_market.name);
     let perp_name = String::from_utf8_lossy(&perp_market.name);
     let _spot = spot_name.trim();
     let _perp = perp_name.trim().split("-").collect::<Vec<&str>>()[0];
-
     println!("spot/perp name: {} {}", _spot, _perp);
     if _spot != _perp {
         println!("spot/perp name dont match ... exiting");
         return Ok(())
     }
+
+    // 1e9 precision
+    let (funding_payment, funding_direction) = compute_funding_rate(&connection, &mut perp_market).unwrap();
+    println!("funding APR: {:#?} {:#?}", funding_payment, funding_direction);
+
+    // 1e9 precision
+    let borrow_rate = compute_borrow_rate(&spot_market).unwrap().mul(10_u128.pow(5_u32));
+    println!("borrow APR: {:#?}", borrow_rate);
 
     // todo: check if greater than some threshold (to ensure profit)
     let delta = funding_payment.saturating_sub(borrow_rate);
@@ -188,7 +181,6 @@ fn main() -> Result<()> {
         println!("borrow rate too expensive to arb... closing positions");
     }
 
-    // repay current debt 
     let user_address = get_user_public_key(&rc_owner.pubkey(), subaccount_id, &PROGRAM_ID);
     let user = get_user(&connection, &user_address)?;
 
