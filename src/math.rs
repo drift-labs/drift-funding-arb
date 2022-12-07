@@ -18,7 +18,7 @@ use pyth_sdk_solana::{load_price_feed_from_account, PriceFeed, Price};
 
 fn get_oracle_info(connection: &RpcClient, oracle_pk: &Pubkey) -> DriftResult<OraclePriceData> {
     let mut account = connection.get_account(oracle_pk).unwrap();
-    let price_feed: PriceFeed = load_price_feed_from_account(&oracle_pk, &mut account).unwrap();
+    let price_feed: PriceFeed = load_price_feed_from_account(oracle_pk, &mut account).unwrap();
     let price_data: Price = price_feed.get_current_price().unwrap();
     let oracle_price = price_data.price;
     let oracle_conf = price_data.conf;
@@ -58,7 +58,7 @@ fn get_oracle_info(connection: &RpcClient, oracle_pk: &Pubkey) -> DriftResult<Or
 // v2/math/funding.rs
 pub fn compute_funding_rate(connection: &RpcClient, market: &mut PerpMarket) -> DriftResult<(u128, PositionDirection)> { 
     let oracle_pk = market.amm.oracle;
-    let oracle_price_data = get_oracle_info(&connection, &oracle_pk).unwrap();
+    let oracle_price_data = get_oracle_info(connection, &oracle_pk).unwrap();
     let sanitize_clamp_denominator = market.get_sanitize_clamp_denominator().unwrap();
 
     let slot = connection.get_slot().unwrap();

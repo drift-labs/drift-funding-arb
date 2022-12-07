@@ -129,14 +129,14 @@ fn main() -> Result<()> {
     );
     
     // setup anchor things 
-    let owner = read_keypair_file(keypair_path.clone()).unwrap();
+    let owner = read_keypair_file(keypair_path).unwrap();
     let rc_owner = Rc::new(owner); 
     let provider = Client::new_with_options(
         cluster.clone(), 
         rc_owner.clone(), 
         CommitmentConfig::confirmed() 
     );
-    let program = provider.program(PROGRAM_ID.clone());
+    let program = provider.program(*PROGRAM_ID);
 
     // cache perp/spot data once for addresses 
     // cache markets once to re-use in get_remaining_accounts
@@ -155,7 +155,7 @@ fn main() -> Result<()> {
     let spot_name = String::from_utf8_lossy(&spot_market.name);
     let perp_name = String::from_utf8_lossy(&perp_market.name);
     let _spot = spot_name.trim();
-    let _perp = perp_name.trim().split("-").collect::<Vec<&str>>()[0];
+    let _perp = perp_name.trim().split('-').collect::<Vec<&str>>()[0];
     println!("spot/perp name: {} {}", _spot, _perp);
     if _spot != _perp {
         println!("spot/perp name dont match ... exiting");
@@ -242,7 +242,7 @@ fn main() -> Result<()> {
             .request()
             .accounts(accounts::PlaceOrder { 
                 state, 
-                user: user_address.clone(), 
+                user: user_address, 
                 authority: rc_owner.pubkey()
             })
             .args(ix::PlacePerpOrder { 
@@ -263,7 +263,7 @@ fn main() -> Result<()> {
         let req = program
             .request()
             .accounts(accounts::UpdateUser {
-                user: user_address.clone(), 
+                user: user_address, 
                 authority: rc_owner.pubkey(),
             })
             .args(ix::UpdateUserMarginTradingEnabled {
@@ -329,12 +329,12 @@ fn main() -> Result<()> {
             .request()
             .accounts(accounts::PlaceOrder { 
                 state, 
-                user: user_address.clone(), 
+                user: user_address, 
                 authority: rc_owner.pubkey()
             })
             .args(ix::PlaceSpotOrder { 
                 params
-            }).accounts(remaining_accounts.clone());
+            }).accounts(remaining_accounts);
         
         if !simulate { 
             let sig = req.send().unwrap();
