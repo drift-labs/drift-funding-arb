@@ -236,7 +236,7 @@ fn main() -> Result<()> {
             perp_market_index,
             false
         );
-        println!("PERP: sending order: {:#?}", params);
+        println!("PERP: sending order...");
 
         let req = program
             .request()
@@ -323,7 +323,7 @@ fn main() -> Result<()> {
             spot_market_index,
             false
         );
-        println!("SPOT: sending order: {:#?}", params);
+        println!("SPOT: sending order...");
 
         let req = program
             .request()
