@@ -97,6 +97,9 @@ struct Args {
     /// will simulate what will happen by default -- provde '-s' flag to send txs
     #[clap(long, short, action)]
     simulate: bool,
+    /// will close all open positions
+    #[clap(long, short, action)]
+    close: bool,
 }
 
 fn main() -> Result<()> {
@@ -107,6 +110,7 @@ fn main() -> Result<()> {
         spot_market_index, 
         mut target_position_size, 
         mut simulate,
+        close,
     } = Args::parse();
 
     simulate = !simulate; 
@@ -170,9 +174,11 @@ fn main() -> Result<()> {
     let delta = funding_payment.saturating_sub(borrow_rate);
     println!("INFO: funding delta % {}", delta as f64 / 1e9);
 
-    let should_close_position = delta == 0;
-    if should_close_position { 
+    let should_close_position = delta == 0 || close;
+    if delta == 0 { 
         println!("borrow rate too expensive to arb... closing positions");
+    } else if should_close_position { 
+        println!("closing positions...");
     }
 
     let user_address = get_user_public_key(&rc_owner.pubkey(), subaccount_id, &PROGRAM_ID);
