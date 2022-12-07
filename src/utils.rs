@@ -1,30 +1,12 @@
 use std::collections::HashMap;
-use std::ops::Mul;
-use std::rc::Rc;
 
 use solana_program::instruction::AccountMeta;
 use anchor_client::solana_client::rpc_client::RpcClient;
-use anchor_client::solana_sdk::commitment_config::CommitmentConfig;
 use anchor_client::solana_sdk::pubkey::Pubkey;
-use anchor_client::solana_sdk::signature::Signer;
-use anchor_client::solana_sdk::signature::read_keypair_file;
-use anchor_client::{Client, Cluster};
 
 use drift::state::state::State;
 use drift::state::perp_market::PerpMarket;
-use drift::state::user::{OrderType, MarketType};
 use drift::state::spot_market::SpotMarket;
-use drift::state::spot_market::SpotBalanceType;
-
-use drift::math::constants::*;
-use drift::math::orders::standardize_base_asset_amount_ceil;
-
-use drift::instructions::OrderParams;
-use drift::controller::position::PositionDirection;
-
-// anchor program ixs
-use drift::instruction as ix;
-use drift::accounts;
 
 use crate::constants::*;
 use crate::address::*;
