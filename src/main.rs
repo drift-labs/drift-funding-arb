@@ -36,6 +36,7 @@ use math::{compute_funding_rate, compute_borrow_rate};
 mod constants;
 use constants::*;
 
+// caching accounts + remaining_accounts
 #[macro_use]
 mod utils; 
 use utils::*;
@@ -81,7 +82,7 @@ struct Args {
     /// keypair for owner 
     #[clap(long, short)]
     keypair_path: String,
-    // position size of the arb  (with precision 10)
+    /// position size of the arb  (with precision 10)
     #[clap(long, short)]
     target_position_size: u64,
     /// subaccount id of owner
@@ -93,7 +94,7 @@ struct Args {
     /// spot to long/short for delta-neutral position
     #[clap(long, default_value_t = 1)]
     spot_market_index: u16,
-    // simulate what would happen
+    /// simulate what would happen
     #[clap(long, short, action)]
     simulate: bool,
 }
@@ -110,13 +111,6 @@ fn main() -> Result<()> {
 
     simulate = !simulate; // will simulate by default -- provde '-s' flag to do real
     target_position_size *= BASE_PRECISION_U64 / 10;
-
-    // let owner_kp_path = args.keypair_path;
-    // let subaccount_id: u16 = args.subaccount_id;
-    // let perp_market_index = 0;
-    // let spot_market_index = 1;
-    // let target_position_size = BASE_PRECISION_U64 / 10;
-    // let simulate = false;
 
     // setup rpc 
     let cluster_name = "mainnet".to_string(); 

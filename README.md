@@ -3,6 +3,41 @@
 - `-t`: 0.1 base size
 - `-s`: send transactions to mainnet flag (if not provided will simulate)
 
+
+`cargo run -- --help`
+
+```bash
+drift-funding-arb 0.1.0
+
+USAGE:
+    drift-funding-arb [OPTIONS] --keypair-path <KEYPAIR_PATH> --target-position-size <TARGET_POSITION_SIZE>
+
+OPTIONS:
+    -h, --help
+            Print help information
+
+    -k, --keypair-path <KEYPAIR_PATH>
+            keypair for owner
+
+        --perp-market-index <PERP_MARKET_INDEX>
+            perp to long/short for funding [default: 0]
+
+    -s, --simulate
+            simulate what would happen
+
+        --spot-market-index <SPOT_MARKET_INDEX>
+            spot to long/short for delta-neutral position [default: 1]
+
+        --subaccount-id <SUBACCOUNT_ID>
+            subaccount id of owner [default: 0]
+
+    -t, --target-position-size <TARGET_POSITION_SIZE>
+            position size of the arb  (with precision 10)
+
+    -V, --version
+            Print version information
+```
+
 ## overview
 - init drift account 
   - usdc collateral 
